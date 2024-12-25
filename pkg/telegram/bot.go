@@ -7,7 +7,8 @@ import (
 )
 
 type Bot struct {
-	bot *tgbotapi.BotAPI
+	bot     *tgbotapi.BotAPI
+	updates tgbotapi.UpdatesChannel
 }
 
 func NewBot(bot *tgbotapi.BotAPI) *Bot {
@@ -20,8 +21,8 @@ func (b *Bot) Start() {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 
-	updates := b.bot.GetUpdatesChan(u)
-	for update := range updates {
+	b.updates = b.bot.GetUpdatesChan(u)
+	for update := range b.updates {
 		if update.Message != nil {
 			log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
 

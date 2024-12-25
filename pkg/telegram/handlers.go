@@ -1,10 +1,13 @@
 package telegram
 
 import (
+	"context"
 	"io"
+	"log"
 	"os"
 	"regexp"
 	"strconv"
+	"time"
 	"youtubeToMp3/pkg/downloader"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -36,74 +39,66 @@ func (b Bot) handleMessage(msg *tgbotapi.Message) error {
 	}
 
 	if isYoutubeLink {
-		// button128 := tgbotapi.NewInlineKeyboardButtonData("MP3 128kbps", "140")
-		// button256 := tgbotapi.NewInlineKeyboardButtonData("MP3 256kbps", "141")
+		b.HandleItag(msg)
 
-		// keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		// 	tgbotapi.NewInlineKeyboardRow(button128, button256),
-		// )
+		choiceCh := make(chan string)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer func() {
+			close(choiceCh)
+			cancel()
+		}()
 
-		// botMsg.Text = "Choose the quality:"
-		// botMsg.ReplyMarkup = keyboard
-		// _, err := b.bot.Send(botMsg)
-		// if err != nil {
-		// 	return err
-		// }
-
-		// choiceCh := make(chan string)
-		// go b.HandleChoice(choiceCh)
-
-		// select {
-		// case choice := <-choiceCh:
+		go b.HandleChoice(ctx, choiceCh)
 		botMsg.ReplyMarkup = nil
-		botMsg.Text = "Downloading video..."
-		_, err = b.bot.Send(botMsg)
-		if err != nil {
-			return err
-		}
+		select {
+		case choice := <-choiceCh:
+			botMsg.Text = "Downloading video..."
+			_, err = b.bot.Send(botMsg)
+			if err != nil {
+				return err
+			}
 
-		choiceInt, err := strconv.Atoi("140")
-		if err != nil {
-			return err
-		}
-		audioFile, err := downloader.DownloadMp3(msg.Text, choiceInt)
+			choiceInt, err := strconv.Atoi(choice)
+			if err != nil {
+				return err
+			}
+			audioFile, err := downloader.DownloadMp3(msg.Text, choiceInt)
 
-		if err != nil {
-			return err
-		}
+			if err != nil {
+				return err
+			}
 
-		botMsg.Text = "Mp3 downloaded, sending to you..."
-		_, err = b.bot.Send(botMsg)
-		if err != nil {
-			return err
-		}
+			botMsg.Text = "Mp3 downloaded, sending to you..."
+			_, err = b.bot.Send(botMsg)
+			if err != nil {
+				return err
+			}
 
-		audioFile, err = os.Open(audioFile.Name())
-		if err != nil {
-			return err
-		}
-		defer audioFile.Close()
+			audioFile, err = os.Open(audioFile.Name())
+			if err != nil {
+				return err
+			}
+			defer audioFile.Close()
 
-		audioBytes, err := io.ReadAll(audioFile)
-		if err != nil {
-			return err
-		}
+			audioBytes, err := io.ReadAll(audioFile)
+			if err != nil {
+				return err
+			}
 
-		audio := tgbotapi.FileBytes{Name: audioFile.Name(), Bytes: audioBytes}
-		audioMsg := tgbotapi.NewAudio(msg.Chat.ID, audio)
-		_, err = b.bot.Send(audioMsg)
-		if err != nil {
-			return err
-		}
+			audio := tgbotapi.FileBytes{Name: audioFile.Name(), Bytes: audioBytes}
+			audioMsg := tgbotapi.NewAudio(msg.Chat.ID, audio)
+			_, err = b.bot.Send(audioMsg)
+			if err != nil {
+				return err
+			}
 
-		// case <-time.After(30 * time.Second):
-		// 	botMsg.Text = "Timeout! No choice was made. Send link again"
-		// 	botMsg.ReplyMarkup = nil
-		// 	_, err := b.bot.Send(botMsg)
-		// 	if err != nil {
-		// 		return err
-		// 	}
-		// }
+		case <-ctx.Done():
+			botMsg.Text = "Timeout! No choice was made. Send link again"
+			_, err := b.bot.Send(botMsg)
+			if err != nil {
+				return err
+			}
+		}
 
 	} else {
 		botMsg.Text = "Bad link. Please send link on YouTube"
@@ -118,22 +113,52 @@ func (b Bot) handleMessage(msg *tgbotapi.Message) error {
 	return nil
 }
 
-// func (b *Bot) HandleChoice(choice chan<- string, updates tgbotapi.UpdatesChannel) {
-// 	updates := b.bot.GetUpdatesChan(tgbotapi.NewUpdate(0))
-// 	for update := range updates {
-// 		if update.CallbackQuery != nil {
+func (b *Bot) HandleChoice(ctx context.Context, choice chan<- string) {
+	for {
+		select {
+		case update := <-b.updates:
+			if update.CallbackQuery != nil {
+				chatID := update.CallbackQuery.Message.Chat.ID
+				messageID := update.CallbackQuery.Message.MessageID
 
-// 			choice <- update.CallbackQuery.Data
+				edit := tgbotapi.NewEditMessageReplyMarkup(chatID, messageID, tgbotapi.InlineKeyboardMarkup{
+					InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{},
+				})
+				_, err := b.bot.Request(edit)
+				if err != nil {
+					log.Printf("Failed to remove buttons: %s\n", err)
+				}
 
-// 			edit := tgbotapi.NewEditMessageReplyMarkup(
-// 				update.CallbackQuery.Message.Chat.ID,
-// 				update.CallbackQuery.Message.MessageID,
-// 				tgbotapi.InlineKeyboardMarkup{},
-// 			)
-// 			b.bot.Send(edit)
+				choice <- update.CallbackQuery.Data
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
 
-// 			// b.bot.Send(tgbotapi.NewCallback(update.CallbackQuery.ID, "Your choice was processed."))
-// 			return
-// 		}
-// 	}
-// }
+// 139 - audio M4A 48kbps
+// 140 - audio MP3 128kbps
+// 171 - audio MP3 192kbps
+// 141 - audio MP3 256kbps
+func (b *Bot) HandleItag(msg *tgbotapi.Message) error {
+	button48 := tgbotapi.NewInlineKeyboardButtonData("MP3 48kbps", "139")
+	button128 := tgbotapi.NewInlineKeyboardButtonData("MP3 128kbps(def)", "140")
+
+	button192 := tgbotapi.NewInlineKeyboardButtonData("MP3 192kbps", "171")
+	button256 := tgbotapi.NewInlineKeyboardButtonData("MP3 256kbps", "141")
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(button128, button192, button256),
+	)
+
+	botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Choose the quality:")
+	botMsg.ReplyMarkup = keyboard
+	_, err := b.bot.Send(botMsg)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

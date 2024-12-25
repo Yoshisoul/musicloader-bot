@@ -23,7 +23,17 @@ func DownloadMp3(url string, itag int) (*os.File, error) {
 		return nil, err
 	}
 
-	formatList140 := video.Formats.Itag(itag) // 140 - audio MP3 128kbps, 141 - audio MP3 256kbps
+	for _, format := range video.Formats {
+		fmt.Println("-------------------------")
+		fmt.Printf("ITAG: %d, Bitrate: %d, MimeType: %s\n", format.ItagNo, format.Bitrate, format.MimeType)
+		fmt.Println("-------------------------")
+	}
+
+	// 139 - audio M4A 48kbps
+	// 140 - audio MP3 128kbps
+	// 141 - audio MP3 256kbps
+	// 171 - audio MP3 192kbps
+	formatList140 := video.Formats.Itag(itag)
 	if formatList140 == nil {
 		err := fmt.Errorf("can't find mp3 audio format for this video")
 		return nil, err
