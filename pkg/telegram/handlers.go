@@ -14,7 +14,7 @@ import (
 )
 
 const commandStart = "start"
-const youtubeLinkPattern = `^(https?\:\/\/)?(www\.youtube\.com|youtu\.?be)\/.+$` // check links
+const youtubeLinkPattern = `^(https?\:\/\/)?(www\.youtube\.com|youtu\.?be)\/.+$`
 
 func (b Bot) handleCommand(msg *tgbotapi.Message) error {
 	botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Unknown commmand, please enter /start")
@@ -39,10 +39,10 @@ func (b Bot) handleMessage(msg *tgbotapi.Message) error {
 	}
 
 	if isYoutubeLink {
-		b.HandleItag(msg)
+		b.handleItag(msg)
 
 		choiceCh := make(chan string)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer func() {
 			close(choiceCh)
 			cancel()
@@ -62,7 +62,7 @@ func (b Bot) handleMessage(msg *tgbotapi.Message) error {
 			if err != nil {
 				return err
 			}
-			audioFile, err := downloader.DownloadMp3(msg.Text, choiceInt)
+			audioFile, err := downloader.DownloadMp3(msg.Text, choiceInt, "mp3")
 
 			if err != nil {
 				return err
@@ -138,24 +138,48 @@ func (b *Bot) HandleChoice(ctx context.Context, choice chan<- string) {
 	}
 }
 
+// itags:
 // 139 - audio M4A 48kbps
 // 140 - audio MP3 128kbps
 // 171 - audio MP3 192kbps
 // 141 - audio MP3 256kbps
-func (b *Bot) HandleItag(msg *tgbotapi.Message) error {
-	button48 := tgbotapi.NewInlineKeyboardButtonData("MP3 48kbps", "139")
-	button128 := tgbotapi.NewInlineKeyboardButtonData("MP3 128kbps(def)", "140")
+func (b *Bot) handleItag(msg *tgbotapi.Message) error {
+	videoInfo, _, err := downloader.GetVideoInfo(msg.Text)
+	if err != nil {
+		return err
+	}
 
-	button192 := tgbotapi.NewInlineKeyboardButtonData("MP3 192kbps", "171")
-	button256 := tgbotapi.NewInlineKeyboardButtonData("MP3 256kbps", "141")
+	keyboard := tgbotapi.NewInlineKeyboardMarkup()
 
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(button128, button192, button256),
-	)
+	for _, format := range videoInfo.Formats {
+		var button tgbotapi.InlineKeyboardButton
 
-	botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Choose the quality:")
+		switch format.ItagNo {
+		case 139:
+			button = tgbotapi.NewInlineKeyboardButtonData("MP3 48kbps", "139")
+		case 140:
+			button = tgbotapi.NewInlineKeyboardButtonData("MP3 128kbps (Standard)", "140")
+		case 171:
+			button = tgbotapi.NewInlineKeyboardButtonData("MP3 192kbps", "171")
+		case 141:
+			button = tgbotapi.NewInlineKeyboardButtonData("MP3 256kbps", "141")
+		default:
+			continue
+		}
+		keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(button))
+	}
+
+	if len(keyboard.InlineKeyboard) == 0 {
+		botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Can't find audio format for this video")
+		_, err := b.bot.Send(botMsg)
+		if err != nil {
+			return err
+		}
+	}
+
+	botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Available quality for this video:")
 	botMsg.ReplyMarkup = keyboard
-	_, err := b.bot.Send(botMsg)
+	_, err = b.bot.Send(botMsg)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,8 @@ package downloader
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/kkdai/youtube/v2"
@@ -10,29 +12,19 @@ import (
 
 const videoDuration = time.Minute * 10
 
-func DownloadMp3(url string, itag int) (*os.File, error) {
-	client := youtube.Client{}
+func DownloadMp3(url string, itag int, outputPath string) (*os.File, error) {
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		err := os.MkdirAll(outputPath, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
+	}
 
-	video, err := client.GetVideo(url)
+	video, client, err := GetVideoInfo(url)
 	if err != nil {
 		return nil, err
 	}
 
-	if video.Duration > videoDuration {
-		err := fmt.Errorf("video is too long: %s", video.Duration)
-		return nil, err
-	}
-
-	for _, format := range video.Formats {
-		fmt.Println("-------------------------")
-		fmt.Printf("ITAG: %d, Bitrate: %d, MimeType: %s\n", format.ItagNo, format.Bitrate, format.MimeType)
-		fmt.Println("-------------------------")
-	}
-
-	// 139 - audio M4A 48kbps
-	// 140 - audio MP3 128kbps
-	// 141 - audio MP3 256kbps
-	// 171 - audio MP3 192kbps
 	formatList140 := video.Formats.Itag(itag)
 	if formatList140 == nil {
 		err := fmt.Errorf("can't find mp3 audio format for this video")
@@ -46,8 +38,9 @@ func DownloadMp3(url string, itag int) (*os.File, error) {
 
 	defer videoStream.Close()
 
-	videoName := video.Title
-	videoFile, err := os.Create(videoName + ".mp3")
+	videoName := sanitizeFileName(video.Title)
+	videoFilePath := filepath.Join(outputPath, videoName+".mp3")
+	videoFile, err := os.Create(videoFilePath)
 	if err != nil {
 		return nil, err
 	}
@@ -59,4 +52,26 @@ func DownloadMp3(url string, itag int) (*os.File, error) {
 	}
 
 	return videoFile, nil
+}
+
+func GetVideoInfo(url string) (*youtube.Video, *youtube.Client, error) {
+	client := youtube.Client{}
+
+	video, err := client.GetVideo(url)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if video.Duration > videoDuration {
+		err := fmt.Errorf("video is too long: %s", video.Duration)
+		return nil, nil, err
+	}
+
+	return video, &client, nil
+}
+
+func sanitizeFileName(fileName string) string {
+	re := regexp.MustCompile(`[<>:"/\\|?*]`)
+	sanitized := re.ReplaceAllString(fileName, "_")
+	return sanitized
 }
