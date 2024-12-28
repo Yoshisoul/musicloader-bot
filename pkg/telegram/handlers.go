@@ -13,15 +13,15 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-const commandStart = "start"
+const commandStart = "/start"
 const youtubeLinkPattern = `^(https?\:\/\/)?(www\.youtube\.com|youtu\.?be)\/.+$`
 
-func (b Bot) handleCommand(msg *tgbotapi.Message) error {
+func (b *Bot) handleCommand(msg *tgbotapi.Message) error {
 	botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Unknown commmand, please enter /start")
 
 	switch msg.Command() {
 	case commandStart:
-		botMsg.Text = "Send youtube link"
+		botMsg.Text = "Hello, send youtube link you want to download in mp3"
 		_, err := b.bot.Send(botMsg)
 		return err
 	default:
@@ -30,7 +30,7 @@ func (b Bot) handleCommand(msg *tgbotapi.Message) error {
 	}
 }
 
-func (b Bot) handleMessage(msg *tgbotapi.Message) error {
+func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 	botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Bad link. Please send link on YouTube")
 
 	isYoutubeLink, err := regexp.MatchString(youtubeLinkPattern, msg.Text)
@@ -39,20 +39,28 @@ func (b Bot) handleMessage(msg *tgbotapi.Message) error {
 	}
 
 	if isYoutubeLink {
-		b.handleItag(msg)
+		msgCallback, err := b.handleItag(msg)
+		if err != nil {
+			return err
+		}
+		if msgCallback == nil {
+			return nil
+		}
 
-		choiceCh := make(chan string)
+		botMsg.ReplyMarkup = nil
+
+		choiceCh := make(chan string, 5)
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer func() {
 			close(choiceCh)
 			cancel()
 		}()
 
-		go b.HandleChoice(ctx, choiceCh)
-		botMsg.ReplyMarkup = nil
+		go b.handleChoice(ctx, choiceCh, msg.Chat.ID, msgCallback.MessageID)
 		select {
 		case choice := <-choiceCh:
 			botMsg.Text = "Downloading video..."
+
 			_, err = b.bot.Send(botMsg)
 			if err != nil {
 				return err
@@ -113,40 +121,15 @@ func (b Bot) handleMessage(msg *tgbotapi.Message) error {
 	return nil
 }
 
-func (b *Bot) HandleChoice(ctx context.Context, choice chan<- string) {
-	for {
-		select {
-		case update := <-b.updates:
-			if update.CallbackQuery != nil {
-				chatID := update.CallbackQuery.Message.Chat.ID
-				messageID := update.CallbackQuery.Message.MessageID
-
-				edit := tgbotapi.NewEditMessageReplyMarkup(chatID, messageID, tgbotapi.InlineKeyboardMarkup{
-					InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{},
-				})
-				_, err := b.bot.Request(edit)
-				if err != nil {
-					log.Printf("Failed to remove buttons: %s\n", err)
-				}
-
-				choice <- update.CallbackQuery.Data
-				return
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
 // itags:
 // 139 - audio M4A 48kbps
 // 140 - audio MP3 128kbps
 // 171 - audio MP3 192kbps
 // 141 - audio MP3 256kbps
-func (b *Bot) handleItag(msg *tgbotapi.Message) error {
+func (b *Bot) handleItag(msg *tgbotapi.Message) (*tgbotapi.Message, error) {
 	videoInfo, _, err := downloader.GetVideoInfo(msg.Text)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup()
@@ -173,16 +156,61 @@ func (b *Bot) handleItag(msg *tgbotapi.Message) error {
 		botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Can't find audio format for this video")
 		_, err := b.bot.Send(botMsg)
 		if err != nil {
-			return err
+			return nil, err
 		}
+
+		return nil, nil
 	}
 
 	botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Available quality for this video:")
 	botMsg.ReplyMarkup = keyboard
-	_, err = b.bot.Send(botMsg)
+	msgInfo, err := b.bot.Send(botMsg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return &msgInfo, nil
 }
+
+func (b *Bot) handleChoice(ctx context.Context, choice chan<- string, chatID int64, messageID int) {
+	// по идеи нужно в дальнейшем как-то удалять канал, как и канал с обновлениями чата
+	// defer func() {
+	// 	b.mu.Lock()
+	// 	delete(b.callbackUpdates, chatID)
+	// 	b.mu.Unlock()
+	// }()
+
+	for {
+		log.Println("Waiting for button update in chat ID:", chatID)
+		select {
+		// если канал в этот момент не создан, то будет блокировка
+		case update := <-b.callbackUpdates[chatID]:
+			log.Println("Button update receive")
+			if update.CallbackQuery.Message.Chat.ID == chatID &&
+				update.CallbackQuery.Message.MessageID == messageID {
+
+				edit := tgbotapi.NewEditMessageReplyMarkup(chatID, messageID, tgbotapi.InlineKeyboardMarkup{
+					InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{},
+				})
+				_, err := b.bot.Request(edit)
+				if err != nil {
+					log.Printf("Failed to remove buttons: %s\n", err)
+				}
+
+				choice <- update.CallbackQuery.Data
+				return
+			} else {
+				log.Printf("Update from another chat or message: %v\n", update.CallbackQuery)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// возможно можно сделать отдельный обработчик для callbackQuery, но не знаю как связать
+// его с обработчиком сообщений
+// func (b *Bot) handleCallbackQuery(callbackQuery *tgbotapi.CallbackQuery) error {
+// 	log.Println("Callback update received")
+// 	return nil
+// }
