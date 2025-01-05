@@ -72,6 +72,6 @@ func GetVideoInfo(url string) (*youtube.Video, *youtube.Client, error) {
 
 func sanitizeFileName(fileName string) string {
 	re := regexp.MustCompile(`[<>:"/\\|?*]`)
-	sanitized := re.ReplaceAllString(fileName, "_")
+	sanitized := re.ReplaceAllString(fileName, " ")
 	return sanitized
 }

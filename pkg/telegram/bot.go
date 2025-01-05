@@ -38,7 +38,7 @@ func (b *Bot) Start() {
 		} else {
 			ch := make(chan tgbotapi.Update, 5) // создаём канал для чата, если такого нет
 			b.chatUpdates[update.FromChat().ChatConfig().ChatID] = ch
-			b.callbackUpdates[update.FromChat().ChatConfig().ChatID] = make(chan tgbotapi.Update, 2)
+			b.callbackUpdates[update.FromChat().ChatConfig().ChatID] = make(chan tgbotapi.Update, 5)
 			ch <- update
 		}
 		b.mu.Unlock()

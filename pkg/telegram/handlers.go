@@ -50,7 +50,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 		botMsg.ReplyMarkup = nil
 
 		choiceCh := make(chan string, 5)
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer func() {
 			close(choiceCh)
 			cancel()
@@ -59,9 +59,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 		go b.handleChoice(ctx, choiceCh, msg.Chat.ID, msgCallback.MessageID)
 		select {
 		case choice := <-choiceCh:
-			botMsg.Text = "Downloading video..."
-
-			_, err = b.bot.Send(botMsg)
+			_, err = b.bot.Request(tgbotapi.NewEditMessageText(msg.Chat.ID, msgCallback.MessageID, "Downloading video..."))
 			if err != nil {
 				return err
 			}
@@ -76,8 +74,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 				return err
 			}
 
-			botMsg.Text = "Mp3 downloaded, sending to you..."
-			_, err = b.bot.Send(botMsg)
+			_, err = b.bot.Request(tgbotapi.NewEditMessageText(msg.Chat.ID, msgCallback.MessageID, "Mp3 downloaded, sending to you..."))
 			if err != nil {
 				return err
 			}
@@ -102,6 +99,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 
 		case <-ctx.Done():
 			botMsg.Text = "Timeout! No choice was made. Send link again"
+			botMsg.ReplyToMessageID = msgCallback.MessageID
 			_, err := b.bot.Send(botMsg)
 			if err != nil {
 				return err
@@ -163,6 +161,7 @@ func (b *Bot) handleItag(msg *tgbotapi.Message) (*tgbotapi.Message, error) {
 	}
 
 	botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Available quality for this video:")
+	botMsg.ReplyToMessageID = msg.MessageID
 	botMsg.ReplyMarkup = keyboard
 	msgInfo, err := b.bot.Send(botMsg)
 	if err != nil {
@@ -173,13 +172,6 @@ func (b *Bot) handleItag(msg *tgbotapi.Message) (*tgbotapi.Message, error) {
 }
 
 func (b *Bot) handleChoice(ctx context.Context, choice chan<- string, chatID int64, messageID int) {
-	// по идеи нужно в дальнейшем как-то удалять канал, как и канал с обновлениями чата
-	// defer func() {
-	// 	b.mu.Lock()
-	// 	delete(b.callbackUpdates, chatID)
-	// 	b.mu.Unlock()
-	// }()
-
 	for {
 		log.Println("Waiting for button update in chat ID:", chatID)
 		select {
@@ -188,14 +180,7 @@ func (b *Bot) handleChoice(ctx context.Context, choice chan<- string, chatID int
 			log.Println("Button update receive")
 			if update.CallbackQuery.Message.Chat.ID == chatID &&
 				update.CallbackQuery.Message.MessageID == messageID {
-
-				edit := tgbotapi.NewEditMessageReplyMarkup(chatID, messageID, tgbotapi.InlineKeyboardMarkup{
-					InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{},
-				})
-				_, err := b.bot.Request(edit)
-				if err != nil {
-					log.Printf("Failed to remove buttons: %s\n", err)
-				}
+				b.removeButtonsFromMessage(chatID, messageID)
 
 				choice <- update.CallbackQuery.Data
 				return
@@ -203,14 +188,18 @@ func (b *Bot) handleChoice(ctx context.Context, choice chan<- string, chatID int
 				log.Printf("Update from another chat or message: %v\n", update.CallbackQuery)
 			}
 		case <-ctx.Done():
+			b.removeButtonsFromMessage(chatID, messageID)
 			return
 		}
 	}
 }
 
-// возможно можно сделать отдельный обработчик для callbackQuery, но не знаю как связать
-// его с обработчиком сообщений
-// func (b *Bot) handleCallbackQuery(callbackQuery *tgbotapi.CallbackQuery) error {
-// 	log.Println("Callback update received")
-// 	return nil
-// }
+func (b *Bot) removeButtonsFromMessage(chatID int64, messageID int) {
+	edit := tgbotapi.NewEditMessageReplyMarkup(chatID, messageID, tgbotapi.InlineKeyboardMarkup{
+		InlineKeyboard: [][]tgbotapi.InlineKeyboardButton{},
+	})
+	_, err := b.bot.Request(edit)
+	if err != nil {
+		log.Printf("Failed to remove buttons: %s\n", err)
+	}
+}
