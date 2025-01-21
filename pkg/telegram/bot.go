@@ -10,15 +10,15 @@ import (
 type Bot struct {
 	bot             *tgbotapi.BotAPI
 	updates         tgbotapi.UpdatesChannel
-	chatUpdates     map[int64]chan tgbotapi.Update
-	callbackUpdates map[int64]chan tgbotapi.Update
 	mu              sync.Mutex
+	callbackUpdates map[int64]chan tgbotapi.Update // key for chatID
+	activeChoice    map[int64]bool
 }
 
 func NewBot(bot *tgbotapi.BotAPI) *Bot {
 	return &Bot{
 		bot:             bot,
-		chatUpdates:     make(map[int64]chan tgbotapi.Update),
+		activeChoice:    make(map[int64]bool),
 		callbackUpdates: make(map[int64]chan tgbotapi.Update),
 	}
 }
@@ -31,44 +31,28 @@ func (b *Bot) Start() {
 	b.updates = b.bot.GetUpdatesChan(u)
 
 	for update := range b.updates {
-		log.Println("General update received")
-		b.mu.Lock()
-		if ch, ok := b.chatUpdates[update.FromChat().ChatConfig().ChatID]; ok {
-			ch <- update
-		} else {
-			ch := make(chan tgbotapi.Update, 5) // создаём канал для чата, если такого нет
-			b.chatUpdates[update.FromChat().ChatConfig().ChatID] = ch
-			b.callbackUpdates[update.FromChat().ChatConfig().ChatID] = make(chan tgbotapi.Update, 5)
-			ch <- update
+		log.Printf("General update received: username = %s, chat ID = %d \n", update.SentFrom().UserName, update.FromChat().ID)
+
+		if _, ok := b.callbackUpdates[update.FromChat().ID]; !ok {
+			b.mu.Lock()
+			b.callbackUpdates[update.FromChat().ID] = make(chan tgbotapi.Update, 5)
+			b.mu.Unlock()
+			log.Printf("Callback channel created for chat ID: %v\n", update.FromChat().ID)
 		}
-		b.mu.Unlock()
-		go b.handleChatUpdate(<-b.chatUpdates[update.FromChat().ChatConfig().ChatID])
+
+		go b.handleChatUpdate(update)
 	}
 }
 
 func (b *Bot) handleChatUpdate(update tgbotapi.Update) {
-	log.Printf("username: %s, chatID: %v\n", update.SentFrom().UserName, update.FromChat().ID)
-	log.Println("Chat update received")
-
 	if update.CallbackQuery != nil {
-		log.Println("Callback update received, chat ID:", update.CallbackQuery.Message.Chat.ID)
-		b.callbackUpdates[update.CallbackQuery.Message.Chat.ID] <- update
+		log.Printf("Callback update received, username: %s, chatID: %v\n", update.SentFrom().UserName, update.FromChat().ID)
+		b.callbackUpdates[update.FromChat().ID] <- update
 		return
 	}
 
-	// подробнее в handlers.go
-	// if update.CallbackQuery != nil {
-	// 	log.Println("Callback update received")
-	// 	err := b.handleCallbackQuery(update.CallbackQuery)
-	// 	if err != nil {
-	// 		log.Printf("error when handling the callback query: %s\n", err)
-	// 		b.bot.Send(tgbotapi.NewMessage(update.
-	// 			CallbackQuery.Message.Chat.ID, "Error when handling the callback query, try again: "+err.Error()))
-	// 	}
-	// }
-
 	if update.Message.IsCommand() {
-		log.Println("Command update received")
+		log.Printf("Command update received, username: %s, chatID: %v\n", update.SentFrom().UserName, update.FromChat().ID)
 		err := b.handleCommand(update.Message)
 		if err != nil {
 			log.Printf("error when handling the command: %s\n", err)
@@ -78,11 +62,16 @@ func (b *Bot) handleChatUpdate(update tgbotapi.Update) {
 		return
 	}
 
-	log.Println("Message update received")
-	err := b.handleMessage(update.Message)
-	if err != nil {
-		log.Printf("error when handling the message: %s\n", err)
-		b.bot.Send(tgbotapi.NewMessage(update.
-			Message.Chat.ID, "Error when handling the message, try again: "+err.Error()))
+	if update.Message != nil {
+		log.Printf("Message update received, username: %s, chatID: %v\n", update.SentFrom().UserName, update.FromChat().ID)
+		err := b.handleMessage(update.Message)
+		if err != nil {
+			log.Printf("error when handling the message: %s\n", err)
+			b.bot.Send(tgbotapi.NewMessage(update.
+				Message.Chat.ID, "Error when handling the message, try again: "+err.Error()))
+		}
+		return
 	}
+
+	log.Printf("Update type not recognized, username: %s, chatID: %v\n", update.SentFrom().UserName, update.FromChat().ID)
 }

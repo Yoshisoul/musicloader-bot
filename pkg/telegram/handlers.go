@@ -22,12 +22,10 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) error {
 	switch msg.Command() {
 	case commandStart:
 		botMsg.Text = "Hello, send youtube link you want to download in mp3"
-		_, err := b.bot.Send(botMsg)
-		return err
-	default:
-		_, err := b.bot.Send(botMsg)
-		return err
 	}
+
+	_, err := b.bot.Send(botMsg)
+	return err
 }
 
 func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
@@ -39,6 +37,15 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 	}
 
 	if isYoutubeLink {
+		if b.activeChoice[msg.Chat.ID] {
+			botMsg.Text = "Please make previous choice or cancel it and send link again"
+			_, err := b.bot.Send(botMsg)
+			if err != nil {
+				return err
+			}
+			return nil
+		}
+
 		msgCallback, err := b.handleItag(msg)
 		if err != nil {
 			return err
@@ -59,15 +66,38 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 		go b.handleChoice(ctx, choiceCh, msg.Chat.ID, msgCallback.MessageID)
 		select {
 		case choice := <-choiceCh:
-			_, err = b.bot.Request(tgbotapi.NewEditMessageText(msg.Chat.ID, msgCallback.MessageID, "Downloading video..."))
-			if err != nil {
-				return err
+			if choice == "cancel" {
+				msgCallback.Text = "Canceled"
+				_, err = b.bot.Request(tgbotapi.NewEditMessageText(msg.Chat.ID, msgCallback.MessageID, "Canceled"))
+				if err != nil {
+					return err
+				}
+
+				log.Printf("Choice canceled: username = %s, chat ID = %d \n", msg.From.UserName, msg.Chat.ID)
+				ctx.Done()
+				return nil
 			}
 
 			choiceInt, err := strconv.Atoi(choice)
 			if err != nil {
 				return err
 			}
+
+			_, err = b.bot.Request(tgbotapi.NewEditMessageText(msg.Chat.ID, msgCallback.MessageID, "Downloading video..."))
+			if err != nil {
+				return err
+			}
+
+			// установить здесь таймер
+			// timerCtx, cancelTimer := context.WithTimeout(context.Background(), 15*time.Second)
+			// defer cancelTimer()
+
+			// var audioFile *os.File
+
+			// go func() {
+			// 	audioFile, err := downloader.DownloadMp3(msg.Text, choiceInt, "mp3", timerCtx)
+			// }()
+
 			audioFile, err := downloader.DownloadMp3(msg.Text, choiceInt, "mp3")
 
 			if err != nil {
@@ -92,15 +122,14 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 
 			audio := tgbotapi.FileBytes{Name: audioFile.Name(), Bytes: audioBytes}
 			audioMsg := tgbotapi.NewAudio(msg.Chat.ID, audio)
+			audioMsg.ReplyToMessageID = msgCallback.MessageID
 			_, err = b.bot.Send(audioMsg)
 			if err != nil {
 				return err
 			}
 
 		case <-ctx.Done():
-			botMsg.Text = "Timeout! No choice was made. Send link again"
-			botMsg.ReplyToMessageID = msgCallback.MessageID
-			_, err := b.bot.Send(botMsg)
+			_, err = b.bot.Request(tgbotapi.NewEditMessageText(msg.Chat.ID, msgCallback.MessageID, "Timeout! No choice was made. Send link again"))
 			if err != nil {
 				return err
 			}
@@ -130,6 +159,12 @@ func (b *Bot) handleItag(msg *tgbotapi.Message) (*tgbotapi.Message, error) {
 		return nil, err
 	}
 
+	log.Println("Available itags:")
+	for _, format := range videoInfo.Formats {
+		log.Printf("%d, ", format.ItagNo)
+	}
+	log.Println()
+
 	keyboard := tgbotapi.NewInlineKeyboardMarkup()
 
 	for _, format := range videoInfo.Formats {
@@ -149,6 +184,9 @@ func (b *Bot) handleItag(msg *tgbotapi.Message) (*tgbotapi.Message, error) {
 		}
 		keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(button))
 	}
+
+	button := tgbotapi.NewInlineKeyboardButtonData("Cancel", "cancel")
+	keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(button))
 
 	if len(keyboard.InlineKeyboard) == 0 {
 		botMsg := tgbotapi.NewMessage(msg.Chat.ID, "Can't find audio format for this video")
@@ -172,23 +210,26 @@ func (b *Bot) handleItag(msg *tgbotapi.Message) (*tgbotapi.Message, error) {
 }
 
 func (b *Bot) handleChoice(ctx context.Context, choice chan<- string, chatID int64, messageID int) {
+	b.activeChoice[chatID] = true
 	for {
-		log.Println("Waiting for button update in chat ID:", chatID)
+		log.Printf("Waiting for button update: chat ID = %d \n", chatID)
 		select {
-		// если канал в этот момент не создан, то будет блокировка
-		case update := <-b.callbackUpdates[chatID]:
-			log.Println("Button update receive")
-			if update.CallbackQuery.Message.Chat.ID == chatID &&
-				update.CallbackQuery.Message.MessageID == messageID {
+		// if channel doesn't exist, it will block here
+		case update := <-b.callbackUpdates[chatID]: // we can only take (!read) value from channel
+			log.Printf("Button update receive: chat ID = %d \n", chatID)
+			if update.CallbackQuery.Message.MessageID == messageID {
 				b.removeButtonsFromMessage(chatID, messageID)
 
 				choice <- update.CallbackQuery.Data
+				b.activeChoice[chatID] = false
 				return
 			} else {
-				log.Printf("Update from another chat or message: %v\n", update.CallbackQuery)
+				log.Printf("Update from another message: %v\n", update.CallbackQuery)
+				b.removeButtonsFromMessage(chatID, messageID)
 			}
 		case <-ctx.Done():
 			b.removeButtonsFromMessage(chatID, messageID)
+			b.activeChoice[chatID] = false
 			return
 		}
 	}
