@@ -1,0 +1,15 @@
+messages:
+  responses:
+    start: "Hello, send youtube link you want to download in mp3"
+    cancel: "Canceled"
+    download: "Downloading..."
+    timeout: "Timeout! Can't download video. Send link again"
+    send: "Mp3 downloaded, sending to you..."
+    no_choice: "Timeout! No choice was made. Send link again"
+    quality: "Available quality for this video:"
+  errors:
+    internal: "Internal error"
+    unknown_command: "unknown commmand, please enter /start"
+    invalid_link: "bad link. Please send link on YouTube"
+    make_choice: "please make previous choice or cancel it and send link again"
+    no_format: "can't find audio format for this video"

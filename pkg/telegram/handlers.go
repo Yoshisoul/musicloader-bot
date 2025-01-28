@@ -15,39 +15,27 @@ import (
 )
 
 const (
-	commandStart       = "start"
 	youtubeLinkPattern = `^(https?\:\/\/)?(www\.youtube\.com|youtu\.?be)\/.+$`
-	startMsg           = "Hello, send youtube link you want to download in mp3"
-	// unkownMsg          = "Unknown commmand, please enter /start"
-	// badlinkMsg         = "Bad link. Please send link on YouTube"
-	// makeChoiceMsg      = "Please make previous choice or cancel it and send link again"
-	// cancelMsg          = "Canceled"
-	dwnldMsg = "Downloading video..."
-	// timeoutMsg         = "Timeout! Can't download video. Send link again"
-	sendMsg = "Mp3 downloaded, sending to you..."
-	// noChoiceMsg        = "Timeout! No choice was made. Send link again"
-	// cantFindMsg        = "Can't find audio format for this video"
-	qualityMsg   = "Available quality for this video:"
-	choiceBuffer = 5
-	timerWait    = 10 * time.Second
-	choiceWait   = 10 * time.Second
+	commandStart       = "start"
+	choiceBuffer       = 5
+	timerWait          = 10 * time.Second
+	choiceWait         = 10 * time.Second
 )
 
 func (b *Bot) handleCommand(msg *tgbotapi.Message) error {
-	botMsg := tgbotapi.NewMessage(msg.Chat.ID, unkownMsg)
+	botMsg := tgbotapi.NewMessage(msg.Chat.ID, "")
 
 	switch msg.Command() {
 	case commandStart:
-		botMsg.Text = startMsg
+		botMsg.Text = b.messages.Start
+		_, err := b.bot.Send(botMsg)
+		return err
+	default:
+		return errUnknownCommand
 	}
-
-	_, err := b.bot.Send(botMsg)
-	return err
 }
 
 func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
-	botMsg := tgbotapi.NewMessage(msg.Chat.ID, badlinkMsg)
-
 	isYoutubeLink, err := regexp.MatchString(youtubeLinkPattern, msg.Text)
 	if err != nil {
 		return err
@@ -55,12 +43,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 
 	if isYoutubeLink {
 		if b.activeChoice[msg.Chat.ID] {
-			botMsg.Text = makeChoiceMsg
-			_, err := b.bot.Send(botMsg)
-			if err != nil {
-				return err
-			}
-			return nil
+			return errMakeChoice
 		}
 
 		msgCallback, err := b.handleItag(msg)
@@ -70,8 +53,6 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 		if msgCallback == nil {
 			return fmt.Errorf("can't find audio format for this video")
 		}
-
-		botMsg.ReplyMarkup = nil
 
 		choiceCh := make(chan string, choiceBuffer)
 		ctx, cancel := context.WithTimeout(context.Background(), choiceWait)
@@ -88,13 +69,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) error {
 		}
 
 	} else {
-		botMsg.Text = badlinkMsg
-		_, err := b.bot.Send(botMsg)
-		if err != nil {
-			return err
-		}
-
-		return nil
+		return errBadLink
 	}
 
 	return nil
@@ -141,16 +116,10 @@ func (b *Bot) handleItag(linkMsg *tgbotapi.Message) (*tgbotapi.Message, error) {
 	keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(button))
 
 	if len(keyboard.InlineKeyboard) == 0 {
-		botMsg := tgbotapi.NewMessage(linkMsg.Chat.ID, cantFindMsg)
-		_, err := b.bot.Send(botMsg)
-		if err != nil {
-			return nil, err
-		}
-
-		return nil, nil
+		return nil, errCantFind
 	}
 
-	botMsg := tgbotapi.NewMessage(linkMsg.Chat.ID, qualityMsg)
+	botMsg := tgbotapi.NewMessage(linkMsg.Chat.ID, b.messages.Quality)
 	botMsg.ReplyToMessageID = linkMsg.MessageID
 	botMsg.ReplyMarkup = keyboard
 	msgInfo, err := b.bot.Send(botMsg)
@@ -202,13 +171,11 @@ func (b *Bot) handleChoice(ctx context.Context, choiceCh chan string, linkMsg *t
 	select {
 	case choice := <-choiceCh:
 		if choice == "cancel" {
-			callbackMsg.Text = "Canceled"
-			_, err = b.bot.Request(tgbotapi.NewEditMessageText(linkMsg.Chat.ID, callbackMsg.MessageID, cancelMsg))
+			_, err = b.bot.Request(tgbotapi.NewEditMessageText(linkMsg.Chat.ID, callbackMsg.MessageID, b.messages.Cancel))
 			if err != nil {
 				return err
 			}
 
-			log.Printf("Choice canceled: username = %s, chat ID = %d \n", linkMsg.From.UserName, linkMsg.Chat.ID)
 			ctx.Done()
 			return nil
 		}
@@ -218,7 +185,7 @@ func (b *Bot) handleChoice(ctx context.Context, choiceCh chan string, linkMsg *t
 			return err
 		}
 
-		_, err = b.bot.Request(tgbotapi.NewEditMessageText(linkMsg.Chat.ID, callbackMsg.MessageID, dwnldMsg))
+		_, err = b.bot.Request(tgbotapi.NewEditMessageText(linkMsg.Chat.ID, callbackMsg.MessageID, b.messages.Download))
 		if err != nil {
 			return err
 		}
@@ -244,7 +211,7 @@ func (b *Bot) handleChoice(ctx context.Context, choiceCh chan string, linkMsg *t
 
 		select {
 		case <-timerCtx.Done():
-			_, err = b.bot.Request(tgbotapi.NewEditMessageText(linkMsg.Chat.ID, callbackMsg.MessageID, timeoutMsg))
+			_, err = b.bot.Request(tgbotapi.NewEditMessageText(linkMsg.Chat.ID, callbackMsg.MessageID, b.messages.Timeout))
 			if err != nil {
 				return err
 			}
@@ -252,7 +219,7 @@ func (b *Bot) handleChoice(ctx context.Context, choiceCh chan string, linkMsg *t
 			return nil
 		case <-done:
 			log.Printf("Mp3 downloaded, sending...: username = %s, chat ID = %d \n", linkMsg.From.UserName, linkMsg.Chat.ID)
-			_, err = b.bot.Request(tgbotapi.NewEditMessageText(linkMsg.Chat.ID, callbackMsg.MessageID, sendMsg))
+			_, err = b.bot.Request(tgbotapi.NewEditMessageText(linkMsg.Chat.ID, callbackMsg.MessageID, b.messages.Send))
 			if err != nil {
 				return err
 			}
@@ -282,7 +249,7 @@ func (b *Bot) handleChoice(ctx context.Context, choiceCh chan string, linkMsg *t
 		}
 
 	case <-ctx.Done():
-		_, err = b.bot.Request(tgbotapi.NewEditMessageText(linkMsg.Chat.ID, callbackMsg.MessageID, noChoiceMsg))
+		_, err = b.bot.Request(tgbotapi.NewEditMessageText(linkMsg.Chat.ID, callbackMsg.MessageID, b.messages.NoChoice))
 		if err != nil {
 			return err
 		}

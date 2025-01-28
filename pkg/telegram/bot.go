@@ -4,6 +4,7 @@ import (
 	"log"
 	"sync"
 	"time"
+	"youtubeToMp3/pkg/config"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -22,14 +23,16 @@ type Bot struct {
 	callbackUpdates map[int64]chan tgbotapi.Update // key for chatID
 	activeChoice    map[int64]bool
 	lastActivity    map[int64]time.Time
+	messages        config.Messages
 }
 
-func NewBot(bot *tgbotapi.BotAPI) *Bot {
+func NewBot(bot *tgbotapi.BotAPI, messages config.Messages) *Bot {
 	return &Bot{
 		bot:             bot,
 		activeChoice:    make(map[int64]bool),
 		callbackUpdates: make(map[int64]chan tgbotapi.Update),
 		lastActivity:    make(map[int64]time.Time),
+		messages:        messages,
 	}
 }
 
@@ -86,8 +89,7 @@ func (b *Bot) handleChatUpdate(update tgbotapi.Update) {
 		err := b.handleMessage(update.Message)
 		if err != nil {
 			log.Printf("Error when handling the message: %s\n", err)
-			b.bot.Send(tgbotapi.NewMessage(update.
-				Message.Chat.ID, "Error when handling the message, try again: "+err.Error()))
+			b.handleError(update.FromChat().ID, err)
 		}
 		return
 	}
