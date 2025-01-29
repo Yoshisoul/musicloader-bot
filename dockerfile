@@ -11,6 +11,6 @@ FROM alpine:latest
 WORKDIR /root/
 
 COPY --from=0 /youtubeToMp3/bin/bot .
-COPY --from=0 /youtubeToMp3/bin/configs configs/
+COPY --from=0 /youtubeToMp3/configs configs/
 
 CMD ["./bot"]

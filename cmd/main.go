@@ -11,8 +11,7 @@ import (
 
 func main() {
 	if err := gotenv.Load(); err != nil {
-		log.Println("Error loading .env file")
-		log.Fatal(err)
+		log.Println("no .env file")
 	}
 
 	cfg, err := config.Init()
