@@ -31,7 +31,3 @@ func main() {
 	botStruct := telegram.NewBot(bot, cfg.Messages)
 	botStruct.Start()
 }
-
-// убрать токен
-
-// не кидать айпи ошибки в чат (при получении ошибки логировать, а в чат кидать сообщение)
