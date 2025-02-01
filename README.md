@@ -8,9 +8,9 @@ You can convert youtube videos to mp3 by sending links
 
 ## How to run :grey_question:
 
-### Run manually
-
 :exclamation: Before running. create a `.env` file with filed `TOKEN` for your bot.  
+
+### Run manually
 
 To run the bot manually, run the following command:
 
