@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"time"
-	"youtubeToMp3/pkg/downloader"
+	"youtubeToMp3/internal/downloader"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )

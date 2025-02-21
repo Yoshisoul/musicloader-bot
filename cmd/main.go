@@ -2,8 +2,8 @@ package main
 
 import (
 	"log"
-	"youtubeToMp3/pkg/config"
-	"youtubeToMp3/pkg/telegram"
+	"youtubeToMp3/internal/config"
+	"youtubeToMp3/internal/telegram"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/subosito/gotenv"

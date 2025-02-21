@@ -4,7 +4,7 @@ import (
 	"log"
 	"sync"
 	"time"
-	"youtubeToMp3/pkg/config"
+	"youtubeToMp3/internal/config"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
